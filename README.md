@@ -36,3 +36,5 @@ Or to include just commit subjects:
       --escape-newlines
   -h, --help
 ```
+
+See full example in [.github/workflows/release_notes.yml](https://github.com/ilmoraunio/release-draft-example/blob/main/.github/workflows/release_notes.yml)
