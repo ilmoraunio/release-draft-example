@@ -46,9 +46,6 @@ query latestRelease {
         :tag
         :name)))
 
-(defn condj [v val]
-  (if val (conj v val) v))
-
 (defn latest-release
   []
   (or (query-latest-release) ""))
