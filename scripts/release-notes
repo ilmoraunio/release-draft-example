@@ -1,0 +1,161 @@
+#!/usr/bin/env bb
+
+(require '[clojure.java.shell :refer [sh]]
+         '[cheshire.core :as json]
+         '[clojure.string :as str]
+         '[clojure.tools.cli :refer [parse-opts]])
+
+(def ^:dynamic *options* nil)
+
+(def cli-options
+  ;; An option with a required argument
+  [[nil "--owner OWNER" "Owner or parent organization or repository"]
+   [nil "--repository REPOSITORY" "Repository name"]
+   ["-a"  "--start-ref REF" "Ref (inclusive) where to start gathering revision list from"
+    :parse-fn str]
+   ["-b"  "--stop-ref REF" "Ref (exclusive) where to stop gathering revision list"
+    :parse-fn str]
+   [nil "--ignore-commits" "Omits commit titles from release notes output"]
+   [nil "--ignore-prs" "Omits PR titles from release notes output"]
+   [nil "--escape-newlines"]
+   ["-h" "--help"]])
+
+(defn github-query [query]
+  (let [check-error (fn [result]
+                      (when (:errors result)
+                        (println "ERROR! graphql query failed")
+                        (println result)
+                        (System/exit 1))
+                      result)]
+    (-> (sh "hub" "api" "graphql" "-f" (str "query="query))
+        :out
+        (json/parse-string true)
+        check-error)))
+
+(defn query-pull-request-data [id]
+  (let [query "
+query associatedPRs {
+  repository(name: \"%s\", owner: \"%s\") {
+    commit: object(expression: \"%s\") {
+      ... on Commit {
+        associatedPullRequests(first:1) {
+          edges{
+            node{
+              title
+              number
+              body
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"]
+    (-> (github-query (format query
+                              (:repository *options*)
+                              (:owner *options*)
+                              id))
+        :data
+        :repository
+        :commit
+        :associatedPullRequests
+        :edges
+        first
+        :node)))
+
+(defn revisions-in-range
+  "Lists PR (merge) commits and direct commits."
+  [start-ref stop-ref]
+  (map (fn [sha] {:sha sha})
+       (-> (sh "git" "rev-list" (format "%s...%s" start-ref stop-ref) "--first-parent")
+           :out
+           (str/split #"\n"))))
+
+(defn amend-prs
+  [revisions]
+  (map (fn [revision]
+         (let [pr (future (query-pull-request-data (:sha revision)))]
+           (assoc revision :pr pr)))
+       revisions))
+
+(defn amend-commit-messages
+  [revisions]
+  (map (fn [revision]
+         (assoc-in revision
+                [:commit :title]
+                (-> (sh "git" "log" "--format=%s %h" "-n" "1" (:sha revision))
+                    :out
+                    (str/replace #"\n$" ""))))
+       revisions))
+
+(defn realize-prs
+  [revisions]
+  (map #(update % :pr deref) revisions))
+
+(defn group-release-notes
+  [revisions]
+  (let [{prs true, commits false} (group-by (comp some? :pr) revisions)]
+  {:prs prs
+   :commits commits}))
+
+(defn amend-release-note-info-for-prs
+  [release-notes]
+  (update release-notes :prs
+    (partial map (fn [{:keys [pr] :as revision}]
+                   (-> revision
+                       (assoc-in [:release-note :title]
+                                 (format "%s #%d" (:title pr)
+                                                    (:number pr))))))))
+
+(defn amend-release-note-info-for-commits
+  [release-notes]
+  (update release-notes :commits
+    (partial map (fn [{:keys [commit] :as revision}]
+                   (-> revision
+                       (assoc-in [:release-note :title] (:title commit)))))))
+
+(defn amend-release-notes
+  [kw release-notes]
+  (assoc-in release-notes [:release-notes kw]
+    (->> (kw release-notes)
+         (map (fn [{:keys [release-note]}]
+                (:title release-note)))
+         (map (partial format "* %s"))
+         (str/join "\n")
+         not-empty)))
+
+(defn condj [v val]
+  (if val (conj v val) v))
+
+(defn release-notes
+  [{:keys [start-ref stop-ref ignore-commits ignore-prs escape-newlines]}]
+  (let [commits? (not ignore-commits)
+        prs? (not ignore-prs)
+        notes (cond->> (revisions-in-range start-ref stop-ref)
+                prs? amend-prs
+                commits? amend-commit-messages
+                prs? realize-prs
+                true group-release-notes
+                prs? amend-release-note-info-for-prs
+                commits? amend-release-note-info-for-commits
+                prs? (amend-release-notes :prs)
+                commits? (amend-release-notes :commits))]
+    (cond-> (str/join "\n"
+              (cond-> []
+                prs? (condj (get-in notes [:release-notes :prs]))
+                commits? (condj (get-in notes [:release-notes :commits]))))
+      escape-newlines (str/replace #"%" "%25")
+      escape-newlines (str/replace #"\r" "%0D")
+      escape-newlines (str/replace #"\n" "%0A"))))
+
+(let [{:keys [summary errors options] :as opts} (parse-opts *command-line-args* cli-options)]
+  (cond
+    (:help options) (println summary)
+    (or (empty? (:owner options))
+        (empty? (:repository options))
+        (empty? (:start-ref options))
+        (empty? (:stop-ref options))) (println summary)
+    errors (println errors)
+    :else (println (binding [*options* options] (release-notes options)))))
+

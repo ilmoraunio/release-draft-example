@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+# Installs needed binaries to /opt/bin
+
+mkdir -p /opt/bin
+
+HUB_VERSION=2.14.2
+HUB_URL="https://github.com/github/hub/releases/download/v${HUB_VERSION}/hub-linux-amd64-${HUB_VERSION}.tgz"
+curl -L "${HUB_URL}" -o /tmp/hub.tgz
+tar xzf /tmp/hub.tgz -C /tmp
+mv /tmp/hub-*/bin/hub /opt/bin/hub
+
+BB_VERSION=0.2.8
+BB_URL="https://github.com/babashka/babashka/releases/download/v${BB_VERSION}/babashka-${BB_VERSION}-linux-amd64.zip"
+curl -L "${BB_URL}" -o /tmp/bb.zip
+unzip /tmp/bb.zip -d /tmp
+mv /tmp/bb /opt/bin/bb

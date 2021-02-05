@@ -1,0 +1,64 @@
+on:
+  push:
+    branches:
+      - main
+
+env:
+  TAG_NAME: 'SNAPSHOT'
+
+jobs:
+  build:
+    name: Create release draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - id: cache
+        uses: actions/cache@v1
+        with:
+          path: /opt/bin
+          key: bins-${{ hashFiles('.github/scripts/install-bins') }}
+      - name: Install bins
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: .github/scripts/install-bins
+      - name: Tag latest for draft
+        uses: richardsimko/update-tag@v1
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Delete draft
+        run: |
+          hub release delete "$TAG_NAME" || echo "Release not found, skipping"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Re-checkout with entire history
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Fetch latest release for later use
+        id: fetch-latest-release
+        uses: thebritican/fetch-latest-release@v2.0.0
+        with:
+          github_token: ${{ github.token }}
+      - name: Produce release notes
+        id: release_notes
+        run: |
+          echo "::set-output name=release_notes::$(/opt/bin/bb .github/scripts/release-notes -a "$TAG_NAME" -b "$LATEST_TAG" --owner "$OWNER" --repository "$REPOSITORY" --escape-newlines)"
+        env:
+          OWNER: ${{ github.event.repository.owner.name }}
+          REPOSITORY: ${{ github.event.repository.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_TAG: ${{ steps.fetch-latest-release.outputs.tag_name }}
+      - name: Create release draft
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          release_name: Unreleased
+          body: |
+            ${{ steps.release_notes.outputs.release_notes }}
+          draft: true
+          prerelease: false
+
