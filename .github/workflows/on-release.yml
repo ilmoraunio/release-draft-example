@@ -35,11 +35,14 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
-      - name: Fetch latest release for later use
-        id: fetch-latest-release
-        uses: thebritican/fetch-latest-release@v2.0.0
-        with:
-          github_token: ${{ github.token }}
+      - name: Get latest release tag
+        id: release_tag
+        run: |
+          echo "::set-output name=release_tag::$(/opt/bin/bb .github/scripts/latest-release-tag --owner "$OWNER" --repository "$REPOSITORY")"
+        env:
+          OWNER: ${{ github.event.repository.owner.name }}
+          REPOSITORY: ${{ github.event.repository.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Produce release notes
         id: release_notes
         run: |
@@ -48,7 +51,7 @@ jobs:
           OWNER: ${{ github.event.repository.owner.name }}
           REPOSITORY: ${{ github.event.repository.name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LATEST_TAG: ${{ steps.fetch-latest-release.outputs.tag_name }}
+          LATEST_TAG: ${{ steps.release_tag.outputs.release_tag }}
       - name: Create release draft
         id: create_release
         uses: actions/create-release@v1

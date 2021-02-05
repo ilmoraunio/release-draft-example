@@ -14,7 +14,7 @@
    ["-a"  "--start-ref REF" "Ref (inclusive) where to start gathering revision list from"
     :parse-fn str]
    ["-b"  "--stop-ref REF" "Ref (exclusive) where to stop gathering revision list"
-    :parse-fn str]
+    :parse-fn not-empty]
    [nil "--ignore-commits" "Omits commit titles from release notes output"]
    [nil "--ignore-prs" "Omits PR titles from release notes output"]
    [nil "--escape-newlines"]
@@ -67,10 +67,14 @@ query associatedPRs {
 (defn revisions-in-range
   "Lists PR (merge) commits and direct commits."
   [start-ref stop-ref]
-  (map (fn [sha] {:sha sha})
-       (-> (sh "git" "rev-list" (format "%s...%s" start-ref stop-ref) "--first-parent")
+  (let [rev-range (if (and start-ref stop-ref)
+                    (format "%s...%s" start-ref stop-ref)
+		    start-ref)]
+  (->> (-> (sh "git" "rev-list" rev-range "--first-parent")
            :out
-           (str/split #"\n"))))
+           (str/split #"\n"))
+       (filter not-empty)
+       (map (fn [sha] {:sha sha})))))
 
 (defn amend-prs
   [revisions]
@@ -154,8 +158,7 @@ query associatedPRs {
     (:help options) (println summary)
     (or (empty? (:owner options))
         (empty? (:repository options))
-        (empty? (:start-ref options))
-        (empty? (:stop-ref options))) (println summary)
+        (empty? (:start-ref options))) (println summary)
     errors (println errors)
     :else (println (binding [*options* options] (release-notes options)))))
 

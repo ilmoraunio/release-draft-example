@@ -1,0 +1,63 @@
+#!/usr/bin/env bb
+
+(require '[clojure.java.shell :refer [sh]]
+         '[cheshire.core :as json]
+         '[clojure.string :as str]
+         '[clojure.tools.cli :refer [parse-opts]])
+
+(def ^:dynamic *options* nil)
+
+(def cli-options
+  ;; An option with a required argument
+  [[nil "--owner OWNER" "Owner or parent organization or repository"]
+   [nil "--repository REPOSITORY" "Repository name"]
+   ["-h" "--help"]])
+
+(defn github-query [query]
+  (let [check-error (fn [result]
+                      (when (:errors result)
+                        (println "ERROR! graphql query failed")
+                        (println result)
+                        (System/exit 1))
+                      result)]
+    (-> (sh "hub" "api" "graphql" "-f" (str "query="query))
+        :out
+        (json/parse-string true)
+        check-error)))
+
+(defn query-latest-release []
+  (let [query "
+query latestRelease {
+  repository(name: \"%s\", owner: \"%s\") {
+    latestRelease {
+      tag {
+        name
+      }
+    }
+  }
+}
+"]
+    (-> (github-query (format query
+                              (:repository *options*)
+                              (:owner *options*)))
+        :data
+        :repository
+        :latestRelease
+        :tag
+        :name)))
+
+(defn condj [v val]
+  (if val (conj v val) v))
+
+(defn latest-release
+  []
+  (or (query-latest-release) ""))
+
+(let [{:keys [summary errors options] :as opts} (parse-opts *command-line-args* cli-options)]
+  (cond
+    (:help options) (println summary)
+    (or (empty? (:owner options))
+        (empty? (:repository options))) (println summary)
+    errors (println errors)
+    :else (println (binding [*options* options] (latest-release)))))
+
