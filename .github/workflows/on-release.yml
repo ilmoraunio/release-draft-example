@@ -21,7 +21,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: .github/scripts/install-bins
       - name: Tag latest for draft
-        uses: richardsimko/update-tag@v1
+        uses: richardsimko/update-tag@5bd0e05b035e02d5da3768dbdcfc4e5e0908623e # v1
         with:
           tag_name: ${{ env.TAG_NAME }}
         env:
